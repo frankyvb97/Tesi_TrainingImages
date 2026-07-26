@@ -16,10 +16,13 @@ from tqdm import tqdm
 # ==========================================
 # CONFIGURAZIONE
 # ==========================================
-MODEL_ID = "facebook/dinov3-convnext-tiny-pretrain-lvd1689m"
-ENSEMBLE_DIR = "./dino_kvasir_model" # La directory che contiene i vari fold_1, fold_2, ecc.
-DATASET_DIR = r"..\Datasets\kvasir-dataset-v2"
-RESULTS_DIR = "./results"
+with open("config/config.json", "r", encoding="utf-8") as f:
+    config = json.load(f)
+
+MODEL_ID = config["MODEL_ID"]
+ENSEMBLE_DIR = config["OUTPUT_DIR"] 
+DATASET_DIR = config["DATASET_DIR"]
+RESULTS_DIR = config["RESULTS_DIR"]
 
 CLASS_NAMES = [
     'dyed-lifted-polyps', 'dyed-resection-margins', 'esophagitis', 
@@ -98,8 +101,8 @@ def load_ensemble_models(device):
     return models, processor
 
 def get_test_dataset_info():
-    """Legge lo split dal file dataset_split.json e restituisce le immagini e le label del Test Set."""
-    SPLIT_JSON = "dataset_split.json"
+    """Legge lo split dal file config/dataset_split.json e restituisce le immagini e le label del Test Set."""
+    SPLIT_JSON = "config/dataset_split.json"
     
     if not os.path.exists(SPLIT_JSON):
         raise FileNotFoundError(f"Il file {SPLIT_JSON} non esiste. Esegui prima train_model.py per generarlo.")

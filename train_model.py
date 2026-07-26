@@ -17,17 +17,19 @@ from sklearn.model_selection import StratifiedKFold
 # ==========================================
 # CONFIGURAZIONE
 # ==========================================
-MODEL_ID = "facebook/dinov3-convnext-tiny-pretrain-lvd1689m"
-# Assicurati che il path sia corretto rispetto a dove lanci lo script
-DATASET_DIR = r"..\Datasets\kvasir-dataset-v2"
-OUTPUT_DIR = "./dino_kvasir_model"
+with open("config/config.json", "r", encoding="utf-8") as f:
+    config = json.load(f)
 
-# Parametri di training (Linear Probing ottimizzato per 4GB VRAM)
-NUM_FOLDS = 5            # Numero di fold per la Stratified K-Fold Cross Validation
-BATCH_SIZE = 16          # Ridotto da 32 a 16 per evitare out-of-memory (OOM) su 4GB VRAM
-EPOCHS = 2              # Aumentato, l'addestramento verrà fermato dall'Early Stopping
-LEARNING_RATE = 1e-3     # Aumentato (standard per un linear probing più reattivo)
-PATIENCE = 5             # Epoche di tolleranza senza miglioramento prima dello stop
+MODEL_ID = config["MODEL_ID"]
+DATASET_DIR = config["DATASET_DIR"]
+OUTPUT_DIR = config["OUTPUT_DIR"]
+
+# Parametri di training
+NUM_FOLDS = config["NUM_FOLDS"]
+BATCH_SIZE = config["BATCH_SIZE"]
+EPOCHS = config["EPOCHS"]
+LEARNING_RATE = config["LEARNING_RATE"]
+PATIENCE = config["PATIENCE"]
 
 def get_device():
     if torch.cuda.is_available():
@@ -72,7 +74,7 @@ def main():
         transforms.Normalize(mean=image_mean, std=image_std),
     ])
 
-    SPLIT_JSON = "dataset_split.json"
+    SPLIT_JSON = "config/dataset_split.json"
     dataset_folder_name = os.path.basename(os.path.normpath(DATASET_DIR))
     
     # Costruiamo prima l'ImageFolder temporaneo solo per leggere le classi ed eseguire lo split se non esiste il JSON

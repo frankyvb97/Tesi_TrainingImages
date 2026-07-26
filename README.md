@@ -79,3 +79,7 @@ Tutti i requisiti sono stati cristallizzati in `requirements.txt` per replicare 
 14. **Bugfix Compatibilità Architettura ConvNeXt:**
     - **Problema:** Errore `AttributeError` durante l'inizializzazione del modello a causa di costrutti incompatibili ereditati dai classici Vision Transformer (`cls_token` e `hidden_size`).
     - **Soluzione:** Ripristinata la corretta mappatura tensoriale specifica per il backbone `ConvNeXt-Tiny` integrato in questa variante di DINOv3, adottando la property `hidden_sizes[-1]` e passando tramite il `pooler_output` del Global Average Pooling, sia nello script di addestramento che in quello di inferenza.
+
+15. **Centralizzazione delle Configurazioni (`config.json`):**
+    - **Richiesta:** Estrarre tutti i parametri e gli iperparametri (Epochs, Batch Size, Learning Rate, Path, ecc.) dai sorgenti per inserirli in un file unico centralizzato.
+    - **Soluzione:** Creata una cartella `config/` all'interno della root di progetto. Al suo interno è stato generato il file `config.json` contenente tutte le variabili. Il pre-esistente `dataset_split.json` è stato anch'esso spostato in `config/` per logica di organizzazione. Entrambi gli script `train_model.py` e `run_model.py` sono stati adattati per leggere il JSON di configurazione in fase di avvio (eliminando l'hardcoding), e il file `.gitignore` aggiornato per tracciare correttamente la nuova posizione.
