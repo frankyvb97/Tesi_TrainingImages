@@ -52,3 +52,11 @@ Tutti i requisiti sono stati cristallizzati in `requirements.txt` per replicare 
    - **Causa:** Il `Trainer` di Hugging Face imposta di default `dataloader_pin_memory=True` (utile per accelerare il passaggio dei dati verso la VRAM della GPU). Quando il dispositivo in uso è la CPU, PyTorch restituisce un warning perché l'operazione non è supportata o necessaria.
    - **Soluzione:** Aggiunto il parametro `dataloader_pin_memory=False` all'interno dell'oggetto `TrainingArguments` in `train_model.py`.
 
+8. **Creazione Test Set (Split 80/10/10):**
+   - **Richiesta:** Isolare un set di immagini "Test" puro, mai visto dal modello né in addestramento né in validazione.
+   - **Soluzione:** Modificato lo script di addestramento per suddividere casualmente il dataset con proporzioni 80% (Train), 10% (Val), 10% (Test), impostando un generatore pseudo-casuale con "seed fisso" (es. `42`). In questo modo lo script di inferenza `run_model.py` può ricreare la stessa divisione matematica ed estrarre le immagini di test senza il rischio di pescare immagini già studiate dal modello in fase di validazione.
+
+9. **Gestione Checkpoint (Salvataggio selettivo):**
+   - **Richiesta:** Evitare di riempire il disco con decine di cartelle `checkpoint-X` ad ogni epoca e tenere solamente il miglior modello e l'ultimo calcolato.
+   - **Soluzione:** È stato impostato `save_total_limit=1` nei `TrainingArguments` in modo che il `Trainer` mantenga in memoria fisica un unico checkpoint intermedio (oltre al best). Alla fine dello script, una funzione di post-processing pulisce l'intero ambiente: esporta i pesi perfetti in `best_model`, rinomina l'ultimissimo checkpoint del ciclo in `last_model` ed elimina permanentemente tutte le altre cartelle residue con la libreria `shutil`.
+

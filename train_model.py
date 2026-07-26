@@ -1,6 +1,9 @@
 import os
 import torch
 import numpy as np
+import evaluate
+import shutil
+import glob
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from transformers import AutoImageProcessor, AutoModel
@@ -74,12 +77,17 @@ def main():
     id2label = {i: name for i, name in enumerate(class_names)}
     label2id = {name: i for i, name in enumerate(class_names)}
 
-    # Split 80/20 train/val
+    # Split 80/10/10 train/val/test con seed fisso per riproducibilità in inferenza
     train_size = int(0.8 * len(full_dataset))
-    val_size = len(full_dataset) - train_size
-    train_dataset, val_dataset = torch.utils.data.random_split(full_dataset, [train_size, val_size])
+    val_size = int(0.1 * len(full_dataset))
+    test_size = len(full_dataset) - train_size - val_size
     
-    print(f"Dataset caricato: {train_size} immagini di train, {val_size} immagini di validazione.")
+    generator = torch.Generator().manual_seed(42)
+    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+        full_dataset, [train_size, val_size, test_size], generator=generator
+    )
+    
+    print(f"Dataset suddiviso: {train_size} Train, {val_size} Validation, {test_size} Test.")
 
     # Convertiamo i subset in un formato compatibile con l'HF Trainer
     # Il Trainer accetta liste di dict o oggetti dataset compatibili.
@@ -157,6 +165,7 @@ def main():
         metric_for_best_model="accuracy",
         push_to_hub=False,
         dataloader_pin_memory=False, # Risolve il warning 'pin_memory' su CPU
+        save_total_limit=1, # Evita di riempire il disco, tiene solo l'ultimo checkpoint e il best
     )
 
     trainer = Trainer(
@@ -171,11 +180,31 @@ def main():
     print("\nInizio del ciclo di addestramento! (Visualizzerai il progresso nella barra qui sotto)")
     trainer.train()
     
-    # 6. Salvataggio modello finale
-    print(f"\nAddestramento completato! Salvataggio del modello migliore in: {OUTPUT_DIR}/best_model")
-    trainer.save_model(os.path.join(OUTPUT_DIR, "best_model"))
-    processor.save_pretrained(os.path.join(OUTPUT_DIR, "best_model"))
-    print("Modello e processor esportati correttamente.")
+    # 6. Salvataggio best_model
+    best_model_dir = os.path.join(OUTPUT_DIR, "best_model")
+    print(f"\nAddestramento completato! Salvataggio del modello migliore in: {best_model_dir}")
+    trainer.save_model(best_model_dir)
+    processor.save_pretrained(best_model_dir)
+    
+    # 7. Salvataggio last_model e pulizia
+    last_model_dir = os.path.join(OUTPUT_DIR, "last_model")
+    checkpoints = glob.glob(os.path.join(OUTPUT_DIR, "checkpoint-*"))
+    
+    if checkpoints:
+        # Ordina per numero di step per trovare l'ultimissimo checkpoint creato
+        checkpoints.sort(key=lambda x: int(x.split("-")[-1]))
+        latest_checkpoint = checkpoints[-1]
+        
+        # Rinomina l'ultimo checkpoint come "last_model"
+        if os.path.exists(last_model_dir):
+            shutil.rmtree(last_model_dir)
+        os.rename(latest_checkpoint, last_model_dir)
+        
+        # Elimina le altre cartelle "checkpoint-xxx" residue (come quella duplicata del best)
+        for ckpt in checkpoints[:-1]:
+            shutil.rmtree(ckpt)
+            
+    print("\nPulizia completata: salvati solo 'best_model' e 'last_model'.")
 
 if __name__ == "__main__":
     main()
