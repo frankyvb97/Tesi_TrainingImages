@@ -1,5 +1,6 @@
 import os
 import csv
+import json
 import torch
 import random
 from PIL import Image
@@ -77,26 +78,27 @@ def load_trained_model(device):
     return model, processor
 
 def get_test_dataset_info():
-    """Ricrea lo split 80/10/10 e restituisce tutte le immagini e le label del Test Set."""
-    full_dataset = datasets.ImageFolder(DATASET_DIR)
+    """Legge lo split dal file dataset_split.json e restituisce le immagini e le label del Test Set."""
+    SPLIT_JSON = "dataset_split.json"
     
-    train_size = int(0.8 * len(full_dataset))
-    val_size = int(0.1 * len(full_dataset))
-    test_size = len(full_dataset) - train_size - val_size
-    
-    generator = torch.Generator().manual_seed(42)
-    _, _, test_dataset = torch.utils.data.random_split(
-        full_dataset, [train_size, val_size, test_size], generator=generator
-    )
+    if not os.path.exists(SPLIT_JSON):
+        raise FileNotFoundError(f"Il file {SPLIT_JSON} non esiste. Esegui prima train_model.py per generarlo.")
+        
+    with open(SPLIT_JSON, "r", encoding="utf-8") as f:
+        split_data = json.load(f)
+        
+    test_samples = split_data["test"]
     
     test_images = []
     test_labels = []
     
-    # Preleviamo le singole path originarie dal full_dataset
-    for idx in test_dataset.indices:
-        image_path, true_label_idx = full_dataset.samples[idx]
-        test_images.append(image_path)
-        test_labels.append(true_label_idx)
+    for sample in test_samples:
+        path = sample[0]
+        label = sample[1]
+        # sample[2] sarebbe il nome della classe, utile per l'utente nel JSON ma non strettamente necessario per l'inferenza
+        
+        test_images.append(path)
+        test_labels.append(label)
         
     return test_images, test_labels
 
