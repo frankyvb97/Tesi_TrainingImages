@@ -1,0 +1,14 @@
+# Ambienti virtuali
+venv_tesi/
+
+# Modelli e output
+dino_kvasir_model/
+
+# Cache di Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.vscode/
+.idea/
