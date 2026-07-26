@@ -46,3 +46,9 @@ Tutti i requisiti sono stati cristallizzati in `requirements.txt` per replicare 
 6. **Configurazione di Git e `.gitignore`:**
    - **Richiesta:** Inizializzazione repository Git, esclusione di cartelle pesanti e primo commit/push.
    - **Azione:** Creato il file `.gitignore` per escludere il virtual environment (`venv_tesi/`) e i salvataggi dei modelli (`dino_kvasir_model/`) dal tracciamento. Git locale è pronto per il commit iniziale ("Prima versione del progetto"). *Nota: gli step di push automatici non verranno eseguiti dal bot senza esplicita richiesta manuale futura.*
+
+7. **Risoluzione Warning `pin_memory` del Dataloader:**
+   - **Problema:** Durante il training veniva sollevato l'avviso `UserWarning: 'pin_memory' argument is set as true but no accelerator is found`.
+   - **Causa:** Il `Trainer` di Hugging Face imposta di default `dataloader_pin_memory=True` (utile per accelerare il passaggio dei dati verso la VRAM della GPU). Quando il dispositivo in uso è la CPU, PyTorch restituisce un warning perché l'operazione non è supportata o necessaria.
+   - **Soluzione:** Aggiunto il parametro `dataloader_pin_memory=False` all'interno dell'oggetto `TrainingArguments` in `train_model.py`.
+

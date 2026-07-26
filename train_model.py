@@ -156,6 +156,7 @@ def main():
         load_best_model_at_end=True,
         metric_for_best_model="accuracy",
         push_to_hub=False,
+        dataloader_pin_memory=False, # Risolve il warning 'pin_memory' su CPU
     )
 
     trainer = Trainer(
