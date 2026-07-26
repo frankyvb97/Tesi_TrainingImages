@@ -12,6 +12,7 @@ from transformers import AutoImageProcessor, AutoModel, TrainerCallback
 from transformers.modeling_outputs import SequenceClassifierOutput
 from transformers import TrainingArguments, Trainer
 from sklearn.metrics import accuracy_score
+from sklearn.model_selection import StratifiedKFold
 
 # ==========================================
 # CONFIGURAZIONE
@@ -22,8 +23,9 @@ DATASET_DIR = r"..\Datasets\kvasir-dataset-v2"
 OUTPUT_DIR = "./dino_kvasir_model"
 
 # Parametri di training (Linear Probing ottimizzato per 4GB VRAM)
+NUM_FOLDS = 5            # Numero di fold per la Stratified K-Fold Cross Validation
 BATCH_SIZE = 16          # Ridotto da 32 a 16 per evitare out-of-memory (OOM) su 4GB VRAM
-EPOCHS = 50              # Aumentato, l'addestramento verrà fermato dall'Early Stopping
+EPOCHS = 2              # Aumentato, l'addestramento verrà fermato dall'Early Stopping
 LEARNING_RATE = 1e-3     # Aumentato (standard per un linear probing più reattivo)
 PATIENCE = 5             # Epoche di tolleranza senza miglioramento prima dello stop
 
@@ -143,9 +145,9 @@ def main():
     # 3. Caricamento Modello e Configurazione Linear Probing
     print(f"\nCaricamento dell'architettura DINO per classificazione a {num_classes} classi...")
     class DINOv3ForImageClassification(torch.nn.Module):
-        def __init__(self, model_id, num_labels, id2label, label2id):
+        def __init__(self, model_id, num_classes, id2label, label2id):
             super().__init__()
-            self.num_labels = num_labels
+            self.num_classes = num_classes
             self.id2label = id2label
             self.label2id = label2id
             
@@ -158,8 +160,9 @@ def main():
                 param.requires_grad = False
                 
             # Create classification head
-            hidden_size = self.config.hidden_sizes[-1]
-            self.classifier = torch.nn.Linear(hidden_size, num_labels)
+            # Aggiungiamo un Linear layer finale basato sull'hidden size del modello
+            hidden_size = self.backbone.config.hidden_sizes[-1]
+            self.classifier = torch.nn.Linear(hidden_size, num_classes)
             
         def forward(self, pixel_values, labels=None, **kwargs):
             outputs = self.backbone(pixel_values=pixel_values, **kwargs)
@@ -169,29 +172,15 @@ def main():
             loss = None
             if labels is not None:
                 loss_fct = torch.nn.CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+                loss = loss_fct(logits.view(-1, self.classifier.out_features), labels.view(-1))
                 
             return SequenceClassifierOutput(
                 loss=loss,
                 logits=logits,
-                hidden_states=outputs.hidden_states,
-                attentions=getattr(outputs, "attentions", None)
+                hidden_states=getattr(outputs, "hidden_states", None),
+                attentions=getattr(outputs, "attentions", None),
             )
 
-    model = DINOv3ForImageClassification(
-        model_id=MODEL_ID,
-        num_labels=num_classes,
-        id2label=id2label,
-        label2id=label2id
-    )
-    model.to(device)
-
-    # 4. Setup Trainer con Callback personalizzato (Evita totalmente di creare checkpoint-* su disco)
-    print("\nInizializzazione Training...")
-    
-    best_model_dir = os.path.join(OUTPUT_DIR, "best_model")
-    last_model_dir = os.path.join(OUTPUT_DIR, "last_model")
-    
     class SaveBestAndLastModelCallback(TrainerCallback):
         def __init__(self, best_model_path, last_model_path, processor, patience):
             self.best_model_path = best_model_path
@@ -212,7 +201,7 @@ def main():
             # 3. Image Processor
             self.processor.save_pretrained(output_dir)
             
-            # Se il trainer è collegato, salviamo tutti gli stati avanzati (Optimizer, Scheduler, ecc.)
+            # Se il trainer è collegato, salviamo tutti gli stati avanzati
             if self.trainer is not None:
                 torch.save(self.trainer.args, os.path.join(output_dir, "training_args.bin"))
                 self.trainer.state.save_to_json(os.path.join(output_dir, "trainer_state.json"))
@@ -243,42 +232,85 @@ def main():
                     if self.patience_counter >= self.patience:
                         print(f"\n[Callback] 🛑 Raggiunto il limite di Patience ({self.patience}). Early Stopping attivato!")
                         control.should_training_stop = True
-    
-    training_args = TrainingArguments(
-        output_dir=OUTPUT_DIR,
-        remove_unused_columns=False,
-        eval_strategy="epoch",
-        save_strategy="no", # Blocca la creazione delle cartelle checkpoint di HuggingFace!
-        learning_rate=LEARNING_RATE,
-        per_device_train_batch_size=BATCH_SIZE,
-        per_device_eval_batch_size=BATCH_SIZE,
-        num_train_epochs=EPOCHS,
-        weight_decay=0.01,
-        push_to_hub=False,
-        dataloader_pin_memory=False,
-    )
 
-    custom_callback = SaveBestAndLastModelCallback(best_model_dir, last_model_dir, processor, PATIENCE)
+    # 3. Creazione loop K-Fold
+    print(f"\nPreparazione Stratified K-Fold con {NUM_FOLDS} folds...")
+    train_val_samples = train_samples + val_samples
+    train_val_labels = [sample[1] for sample in train_val_samples]
     
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=hf_train_dataset,
-        eval_dataset=hf_val_dataset,
-        processing_class=processor,
-        compute_metrics=compute_metrics,
-        callbacks=[custom_callback]
-    )
-    # Agganciamo il trainer al callback in modo che possa accedere all'optimizer e scheduler
-    custom_callback.trainer = trainer
+    skf = StratifiedKFold(n_splits=NUM_FOLDS, shuffle=True, random_state=42)
+    
+    for fold, (train_idx, val_idx) in enumerate(skf.split(train_val_samples, train_val_labels), 1):
+        print(f"\n{'='*50}")
+        print(f"=== FOLD {fold}/{NUM_FOLDS} ===")
+        print(f"{'='*50}")
+        
+        fold_train_samples = [train_val_samples[i] for i in train_idx]
+        fold_val_samples = [train_val_samples[i] for i in val_idx]
+        
+        hf_train_dataset = JSONSubsetDataset(fold_train_samples, transform=data_transforms)
+        hf_val_dataset = JSONSubsetDataset(fold_val_samples, transform=data_transforms)
 
-    # 5. Esecuzione
-    print("\nInizio del ciclo di addestramento! (Visualizzerai il progresso nella barra qui sotto)")
-    trainer.train()
-    
-    # 6. Salvataggio last_model finale
-    print(f"\nAddestramento completato! Salvataggio dell'ultimo modello elaborato in: {last_model_dir}")
-    custom_callback._save_full_checkpoint(last_model_dir, model)
+        # 4. Inizializzazione Processor e Modello da ZERO per evitare Data Leakage
+        print("Inizializzazione Processor e Modello...")
+        processor = AutoImageProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
+        
+        model = DINOv3ForImageClassification(
+            MODEL_ID, 
+            num_classes=len(class_names), 
+            id2label=id2label, 
+            label2id=label2id
+        )
+        model.to(device)
+
+        # 5. Setup Trainer con Callback personalizzato
+        fold_output_dir = os.path.join(OUTPUT_DIR, f"fold_{fold}")
+        best_model_dir = os.path.join(fold_output_dir, "best_model")
+        last_model_dir = os.path.join(fold_output_dir, "last_model")
+        
+        training_args = TrainingArguments(
+            output_dir=fold_output_dir,
+            remove_unused_columns=False,
+            eval_strategy="epoch",
+            save_strategy="no", 
+            learning_rate=LEARNING_RATE,
+            per_device_train_batch_size=BATCH_SIZE,
+            per_device_eval_batch_size=BATCH_SIZE,
+            num_train_epochs=EPOCHS,
+            weight_decay=0.01,
+            push_to_hub=False,
+            dataloader_pin_memory=False,
+        )
+
+        custom_callback = SaveBestAndLastModelCallback(best_model_dir, last_model_dir, processor, PATIENCE)
+        
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=hf_train_dataset,
+            eval_dataset=hf_val_dataset,
+            processing_class=processor,
+            compute_metrics=compute_metrics,
+            callbacks=[custom_callback]
+        )
+        custom_callback.trainer = trainer
+
+        # 6. Esecuzione Addestramento Fold
+        print(f"\nInizio addestramento per Fold {fold}!")
+        trainer.train()
+        
+        # 7. Salvataggio last_model finale Fold
+        print(f"\nAddestramento Fold {fold} completato! Salvataggio last_model in: {last_model_dir}")
+        custom_callback._save_full_checkpoint(last_model_dir, model)
+        
+        # Pulizia della memoria
+        del model
+        del trainer
+        del custom_callback
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+    print("\nProcesso Stratified K-Fold completato con successo per tutti i fold!")
 
 if __name__ == "__main__":
     main()

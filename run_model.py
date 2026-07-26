@@ -1,6 +1,7 @@
 import os
 import csv
 import json
+import glob
 import torch
 import random
 from PIL import Image
@@ -16,7 +17,7 @@ from tqdm import tqdm
 # CONFIGURAZIONE
 # ==========================================
 MODEL_ID = "facebook/dinov3-convnext-tiny-pretrain-lvd1689m"
-BEST_MODEL_DIR = "./dino_kvasir_model/best_model"
+ENSEMBLE_DIR = "./dino_kvasir_model" # La directory che contiene i vari fold_1, fold_2, ecc.
 DATASET_DIR = r"..\Datasets\kvasir-dataset-v2"
 RESULTS_DIR = "./results"
 
@@ -56,26 +57,45 @@ class DINOv3ForImageClassification(torch.nn.Module):
         logits = self.classifier(pooled_output)
         return SequenceClassifierOutput(logits=logits)
 
-def load_trained_model(device):
-    print(f"Inizializzazione DINOv3 e caricamento pesi da {BEST_MODEL_DIR}...")
-    processor = AutoImageProcessor.from_pretrained(BEST_MODEL_DIR, trust_remote_code=True)
-    model = DINOv3ForImageClassification(MODEL_ID, NUM_CLASSES, id2label, label2id)
+def load_ensemble_models(device):
+    print(f"Ricerca modelli nella directory {ENSEMBLE_DIR}...")
+    model_dirs = glob.glob(os.path.join(ENSEMBLE_DIR, "fold_*", "best_model"))
     
-    safetensors_path = os.path.join(BEST_MODEL_DIR, "model.safetensors")
-    bin_path = os.path.join(BEST_MODEL_DIR, "pytorch_model.bin")
-    
-    if os.path.exists(safetensors_path):
-        state_dict = load_file(safetensors_path)
-        model.load_state_dict(state_dict)
-    elif os.path.exists(bin_path):
-        state_dict = torch.load(bin_path, map_location="cpu", weights_only=True)
-        model.load_state_dict(state_dict)
-    else:
-        raise FileNotFoundError(f"Non ho trovato pesi in {BEST_MODEL_DIR}")
+    if not model_dirs:
+        raise FileNotFoundError(f"Nessuna cartella trovata in {ENSEMBLE_DIR}/fold_*/best_model")
         
-    model.to(device)
-    model.eval()
-    return model, processor
+    print(f"Trovati {len(model_dirs)} modelli Fold! Inizializzazione in corso...")
+    
+    models = {}
+    processor = None
+    
+    for m_dir in tqdm(model_dirs, desc="Caricamento Modelli Ensemble"):
+        # Estraiamo il nome del fold (es: fold_1) dal path
+        fold_name = os.path.basename(os.path.dirname(m_dir))
+        
+        if processor is None:
+            processor = AutoImageProcessor.from_pretrained(m_dir, trust_remote_code=True)
+            
+        model = DINOv3ForImageClassification(MODEL_ID, NUM_CLASSES, id2label, label2id)
+        
+        safetensors_path = os.path.join(m_dir, "model.safetensors")
+        bin_path = os.path.join(m_dir, "pytorch_model.bin")
+        
+        if os.path.exists(safetensors_path):
+            state_dict = load_file(safetensors_path)
+            model.load_state_dict(state_dict)
+        elif os.path.exists(bin_path):
+            state_dict = torch.load(bin_path, map_location="cpu", weights_only=True)
+            model.load_state_dict(state_dict)
+        else:
+            print(f"Attenzione: Nessun peso trovato in {m_dir}")
+            continue
+            
+        model.to(device)
+        model.eval()
+        models[fold_name] = model
+        
+    return models, processor
 
 def get_test_dataset_info():
     """Legge lo split dal file dataset_split.json e restituisce le immagini e le label del Test Set."""
@@ -102,11 +122,48 @@ def get_test_dataset_info():
         
     return test_images, test_labels
 
-def evaluate_test_set(model, processor, device):
-    os.makedirs(RESULTS_DIR, exist_ok=True)
+def save_evaluation_results(y_true, y_pred, confidences, output_dir, test_images):
+    """Salva CSV, TXT e Confusion Matrix per un set specifico di predizioni."""
+    os.makedirs(output_dir, exist_ok=True)
     
+    csv_path = os.path.join(output_dir, "predictions.csv")
+    with open(csv_path, mode="w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["image_path", "true_class", "predicted_class", "confidence"])
+        for i in range(len(test_images)):
+            writer.writerow([
+                test_images[i], 
+                CLASS_NAMES[y_true[i]], 
+                CLASS_NAMES[y_pred[i]], 
+                f"{confidences[i]:.4f}"
+            ])
+            
+    acc = accuracy_score(y_true, y_pred)
+    precision = precision_score(y_true, y_pred, average='macro', zero_division=0)
+    recall = recall_score(y_true, y_pred, average='macro', zero_division=0)
+    f1 = f1_score(y_true, y_pred, average='macro', zero_division=0)
+    
+    txt_path = os.path.join(output_dir, "results.txt")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write("=== RISULTATI VALUTAZIONE ===\n")
+        f.write(f"Numero totale immagini testate: {len(test_images)}\n\n")
+        f.write(f"Accuracy:    {acc:.4f}\n")
+        f.write(f"Precision:   {precision:.4f} (Macro Average)\n")
+        f.write(f"Recall:      {recall:.4f} (Macro Average)\n")
+        f.write(f"Sensitivity: {recall:.4f} (Identica alla Recall nel Macro Average)\n")
+        f.write(f"F1 Score:    {f1:.4f} (Macro Average)\n")
+        
+    cm = confusion_matrix(y_true, y_pred, labels=list(range(NUM_CLASSES)))
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=CLASS_NAMES)
+    fig, ax = plt.subplots(figsize=(12, 10))
+    disp.plot(cmap=plt.cm.Blues, ax=ax, xticks_rotation='vertical')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "confusion_matrix.png"))
+    plt.close()
+
+def evaluate_all(models_dict, processor, device):
     test_images, test_labels_idx = get_test_dataset_info()
-    print(f"Inizio valutazione sull'intero Test Set ({len(test_images)} immagini)...")
+    print(f"Inizio valutazione globale (Singoli Fold + Ensemble) sull'intero Test Set ({len(test_images)} immagini)...")
     
     if "shortest_edge" in processor.size and processor.size["shortest_edge"] is not None:
         size = processor.size["shortest_edge"]
@@ -119,101 +176,73 @@ def evaluate_test_set(model, processor, device):
         transforms.Normalize(mean=processor.image_mean, std=processor.image_std),
     ])
     
+    fold_names = list(models_dict.keys())
+    
+    # Dizionari per salvare le metriche individuali
+    y_pred_dict = {name: [] for name in fold_names}
+    conf_dict = {name: [] for name in fold_names}
+    
+    # Array per l'Ensemble
+    y_pred_ensemble = []
+    conf_ensemble = []
     y_true = []
-    y_pred = []
     
-    csv_path = os.path.join(RESULTS_DIR, "predictions.csv")
-    
-    # Prepariamo il file CSV
-    with open(csv_path, mode="w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["image_path", "true_class", "predicted_class", "confidence"])
+    for i in tqdm(range(len(test_images)), desc="Inferenza Multipla + Ensemble"):
+        image_path = test_images[i]
+        true_label_idx = test_labels_idx[i]
+        y_true.append(true_label_idx)
         
-        # tqdm mostrerà la barra di caricamento
-        for i in tqdm(range(len(test_images)), desc="Inferenza Test Set"):
-            image_path = test_images[i]
-            true_label_idx = test_labels_idx[i]
-            true_label_name = CLASS_NAMES[true_label_idx]
-            
-            # Carica immagine
-            image = Image.open(image_path).convert("RGB")
-            pixel_values = data_transforms(image).unsqueeze(0).to(device)
-            
-            # Passaggio modello
-            with torch.no_grad():
+        image = Image.open(image_path).convert("RGB")
+        pixel_values = data_transforms(image).unsqueeze(0).to(device)
+        
+        ensemble_probs = torch.zeros(1, NUM_CLASSES).to(device)
+        
+        with torch.no_grad():
+            for name, model in models_dict.items():
                 outputs = model(pixel_values=pixel_values)
-                logits = outputs.logits
-                probabilities = torch.nn.functional.softmax(logits, dim=-1)[0]
+                probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
                 
-            predicted_class_id = logits.argmax(-1).item()
-            predicted_label = CLASS_NAMES[predicted_class_id]
-            confidence = probabilities[predicted_class_id].item()
-            
-            # Registra dati
-            y_true.append(true_label_idx)
-            y_pred.append(predicted_class_id)
-            
-            # Scrivi la riga del file CSV
-            writer.writerow([image_path, true_label_name, predicted_label, f"{confidence:.4f}"])
-            
-    print(f"\nPredizioni salvate con successo in {csv_path}")
-            
-    # Calcolo Metriche
-    print("Calcolo metriche in corso...")
-    acc = accuracy_score(y_true, y_pred)
-    precision = precision_score(y_true, y_pred, average='macro', zero_division=0)
-    recall = recall_score(y_true, y_pred, average='macro', zero_division=0)
-    f1 = f1_score(y_true, y_pred, average='macro', zero_division=0)
-    
-    # In una classificazione multi-classe calcolata con macro-average, 
-    # la Sensitivity (True Positive Rate) è matematicamente equivalente alla Recall.
-    sensitivity = recall
-    
-    # Salvataggio Metriche in txt
-    txt_path = os.path.join(RESULTS_DIR, "results.txt")
-    with open(txt_path, "w", encoding="utf-8") as f:
-        f.write("=== RISULTATI VALUTAZIONE TEST SET ===\n")
-        f.write(f"Numero totale immagini testate: {len(test_images)}\n\n")
-        f.write(f"Accuracy:    {acc:.4f}\n")
-        f.write(f"Precision:   {precision:.4f} (Macro Average)\n")
-        f.write(f"Recall:      {recall:.4f} (Macro Average)\n")
-        f.write(f"Sensitivity: {sensitivity:.4f} (Identica alla Recall nel Macro Average)\n")
-        f.write(f"F1 Score:    {f1:.4f} (Macro Average)\n")
+                # Registriamo la predizione del singolo fold
+                pred_idx = probs.argmax(-1).item()
+                conf = probs[0, pred_idx].item()
+                
+                y_pred_dict[name].append(pred_idx)
+                conf_dict[name].append(conf)
+                
+                # Aggiungiamo le probabilità all'accumulatore per l'Ensemble
+                ensemble_probs += probs
+                
+        # Calcolo predizione Ensemble (Media delle probabilità)
+        ensemble_probs /= len(models_dict)
+        pred_idx_ens = ensemble_probs.argmax(-1).item()
+        conf_ens = ensemble_probs[0, pred_idx_ens].item()
         
-    print(f"Metriche salvate con successo in {txt_path}")
+        y_pred_ensemble.append(pred_idx_ens)
+        conf_ensemble.append(conf_ens)
+        
+    # Fase di Salvataggio
+    for name in fold_names:
+        print(f"\nSalvataggio risultati per '{name}' in corso...")
+        output_dir = os.path.join(RESULTS_DIR, name)
+        save_evaluation_results(y_true, y_pred_dict[name], conf_dict[name], output_dir, test_images)
+        
+    print(f"\nSalvataggio risultati per 'ensemble' in corso...")
+    output_dir = os.path.join(RESULTS_DIR, "ensemble")
+    save_evaluation_results(y_true, y_pred_ensemble, conf_ensemble, output_dir, test_images)
     
-    # Generazione Confusion Matrix
-    print("Generazione Confusion Matrix...")
-    cm = confusion_matrix(y_true, y_pred, labels=range(NUM_CLASSES))
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=CLASS_NAMES)
-    
-    # Aumentiamo la dimensione per accomodare gli 8 nomi lunghi delle classi
-    fig, ax = plt.subplots(figsize=(12, 10))
-    disp.plot(ax=ax, cmap="Blues", xticks_rotation="vertical")
-    plt.tight_layout()
-    
-    cm_path = os.path.join(RESULTS_DIR, "confusion_matrix.png")
-    plt.savefig(cm_path, dpi=300)
-    plt.close()
-    
-    print(f"Confusion Matrix salvata come immagine in {cm_path}")
-    print("\nValutazione completata! Troverai tutto nella cartella 'results'.")
+    print("\nValutazione globale completata! Troverai tutto diviso in sottocartelle dentro 'results'.")
 
 def main():
-    print("=== DINOv3 Valutazione Globale su Test Set (Kvasir-v2) ===")
+    print("=== DINOv3 Valutazione Multimodello (Kvasir-v2) ===")
     device = get_device()
+    print(f"Device per l'inferenza: {device}")
     
-    if not os.path.exists(BEST_MODEL_DIR):
-        print(f"\nATTENZIONE: La cartella {BEST_MODEL_DIR} non esiste ancora.")
-        print("Devi prima completare l'addestramento lanciando train_model.py!")
-        return
-        
     if not os.path.exists(DATASET_DIR):
         print(f"\nATTENZIONE: Il dataset in {DATASET_DIR} non è stato trovato.")
         return
         
-    model, processor = load_trained_model(device)
-    evaluate_test_set(model, processor, device)
+    models_dict, processor = load_ensemble_models(device)
+    evaluate_all(models_dict, processor, device)
 
 if __name__ == "__main__":
     main()

@@ -68,3 +68,14 @@ Tutti i requisiti sono stati cristallizzati in `requirements.txt` per replicare 
     - **Richiesta:** Salvare la ripartizione matematica (Train, Val, Test) in modo permanente su disco, per evitare che un seed matematico generi subset imprecisi se la cartella originale delle immagini dovesse variare nel tempo.
     - **Soluzione:** `train_model.py` scansiona il dataset; se `dataset_split.json` non esiste o appartiene a un dataset dal nome differente, ricalcola i set (80/10/10) e salva i percorsi file esatti all'interno del JSON. Un costrutto `JSONSubsetDataset` sostituisce la libreria `ImageFolder` standard. Lo script `run_model.py` va ora a leggere esattamente da quel file JSON i percorsi delle immagini di Test da valutare, garantendo una separazione stagna a vita.
 
+12. **Implementazione Stratified K-Fold Cross Validation (5-Fold):**
+    - **Richiesta:** Unire i dataset di Train e Validation per applicare una Stratified K-Fold in modo da sfruttare appieno i dati di training e ottenere una validazione più robusta.
+    - **Soluzione:** Lo script `train_model.py` è stato completamente refattorizzato per dividere iterativamente `train_val_samples` in 5 Fold bilanciati usando `StratifiedKFold` di *scikit-learn*. Ogni iterazione re-inizializza il modello DINOv3 e il processor da zero (per evitare *data leakage*) e salva il proprio `best_model` e `last_model` in cartelle separate (es. `dino_kvasir_model/fold_1/best_model`).
+
+13. **Integrazione Ensemble Inference nel Testing (Soft Voting):**
+    - **Richiesta:** Adottare le metodologie della letteratura scientifica per massimizzare le metriche sul Test Set tramite i 5 modelli generati dalla K-Fold.
+    - **Soluzione:** In `run_model.py` è stato implementato l'approccio *Ensemble*. Lo script ora carica automaticamente tutti i modelli salvati nei vari Fold e processa ogni immagine del Test Set attraverso la commissione di reti. I tensori Softmax estratti vengono accumulati e si calcola la media probabilistica matematica. I risultati (CSV, metriche e Confusion Matrix) vengono generati individualmente per ciascun Fold e per il super-modello Ensemble, suddivisi in sottocartelle dentro `/results`.
+
+14. **Bugfix Compatibilità Architettura ConvNeXt:**
+    - **Problema:** Errore `AttributeError` durante l'inizializzazione del modello a causa di costrutti incompatibili ereditati dai classici Vision Transformer (`cls_token` e `hidden_size`).
+    - **Soluzione:** Ripristinata la corretta mappatura tensoriale specifica per il backbone `ConvNeXt-Tiny` integrato in questa variante di DINOv3, adottando la property `hidden_sizes[-1]` e passando tramite il `pooler_output` del Global Average Pooling, sia nello script di addestramento che in quello di inferenza.
