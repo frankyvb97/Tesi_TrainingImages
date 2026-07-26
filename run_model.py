@@ -1,4 +1,5 @@
 import os
+import csv
 import torch
 import random
 from PIL import Image
@@ -6,6 +7,9 @@ from torchvision import transforms, datasets
 from transformers import AutoImageProcessor, AutoModel
 from transformers.modeling_outputs import SequenceClassifierOutput
 from safetensors.torch import load_file
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 # ==========================================
 # CONFIGURAZIONE
@@ -13,6 +17,7 @@ from safetensors.torch import load_file
 MODEL_ID = "facebook/dinov3-convnext-tiny-pretrain-lvd1689m"
 BEST_MODEL_DIR = "./dino_kvasir_model/best_model"
 DATASET_DIR = r"..\Datasets\kvasir-dataset-v2"
+RESULTS_DIR = "./results"
 
 CLASS_NAMES = [
     'dyed-lifted-polyps', 'dyed-resection-margins', 'esophagitis', 
@@ -48,22 +53,12 @@ class DINOv3ForImageClassification(torch.nn.Module):
         outputs = self.backbone(pixel_values=pixel_values, **kwargs)
         pooled_output = outputs.pooler_output
         logits = self.classifier(pooled_output)
-        return SequenceClassifierOutput(
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=getattr(outputs, "attentions", None)
-        )
+        return SequenceClassifierOutput(logits=logits)
 
 def load_trained_model(device):
     print(f"Inizializzazione DINOv3 e caricamento pesi da {BEST_MODEL_DIR}...")
     processor = AutoImageProcessor.from_pretrained(BEST_MODEL_DIR, trust_remote_code=True)
-    
-    model = DINOv3ForImageClassification(
-        model_id=MODEL_ID,
-        num_labels=NUM_CLASSES,
-        id2label=id2label,
-        label2id=label2id
-    )
+    model = DINOv3ForImageClassification(MODEL_ID, NUM_CLASSES, id2label, label2id)
     
     safetensors_path = os.path.join(BEST_MODEL_DIR, "model.safetensors")
     bin_path = os.path.join(BEST_MODEL_DIR, "pytorch_model.bin")
@@ -81,15 +76,10 @@ def load_trained_model(device):
     model.eval()
     return model, processor
 
-def get_random_test_image():
-    """
-    Carica il dataset e riproduce la stessa divisione usata in train_model.py
-    per estrarre un'immagine casuale esclusivamente dal Test Set.
-    """
-    print(f"Lettura del dataset originale da {DATASET_DIR}...")
+def get_test_dataset_info():
+    """Ricrea lo split 80/10/10 e restituisce tutte le immagini e le label del Test Set."""
     full_dataset = datasets.ImageFolder(DATASET_DIR)
     
-    # Stesso seed e stesse proporzioni usate in train_model.py (80/10/10)
     train_size = int(0.8 * len(full_dataset))
     val_size = int(0.1 * len(full_dataset))
     test_size = len(full_dataset) - train_size - val_size
@@ -99,18 +89,22 @@ def get_random_test_image():
         full_dataset, [train_size, val_size, test_size], generator=generator
     )
     
-    # test_dataset.indices contiene gli indici globali originali del test set
-    random_idx = random.choice(test_dataset.indices)
-    image_path, true_label_idx = full_dataset.samples[random_idx]
-    true_label_name = CLASS_NAMES[true_label_idx]
+    test_images = []
+    test_labels = []
     
-    return image_path, true_label_name
+    # Preleviamo le singole path originarie dal full_dataset
+    for idx in test_dataset.indices:
+        image_path, true_label_idx = full_dataset.samples[idx]
+        test_images.append(image_path)
+        test_labels.append(true_label_idx)
+        
+    return test_images, test_labels
 
-def predict_image(image_path, true_label_name, model, processor, device):
-    print(f"\nInferenza su: {image_path}")
-    print(f"Classe Reale (Ground Truth): {true_label_name.upper()}")
+def evaluate_test_set(model, processor, device):
+    os.makedirs(RESULTS_DIR, exist_ok=True)
     
-    image = Image.open(image_path).convert("RGB")
+    test_images, test_labels_idx = get_test_dataset_info()
+    print(f"Inizio valutazione sull'intero Test Set ({len(test_images)} immagini)...")
     
     if "shortest_edge" in processor.size and processor.size["shortest_edge"] is not None:
         size = processor.size["shortest_edge"]
@@ -123,38 +117,93 @@ def predict_image(image_path, true_label_name, model, processor, device):
         transforms.Normalize(mean=processor.image_mean, std=processor.image_std),
     ])
     
-    pixel_values = data_transforms(image).unsqueeze(0).to(device)
+    y_true = []
+    y_pred = []
     
-    with torch.no_grad():
-        outputs = model(pixel_values=pixel_values)
-        logits = outputs.logits
-        probabilities = torch.nn.functional.softmax(logits, dim=-1)[0]
+    csv_path = os.path.join(RESULTS_DIR, "predictions.csv")
+    
+    # Prepariamo il file CSV
+    with open(csv_path, mode="w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["image_path", "true_class", "predicted_class", "confidence"])
         
-    predicted_class_id = logits.argmax(-1).item()
-    predicted_label = model.id2label[predicted_class_id]
-    confidence = probabilities[predicted_class_id].item()
+        # tqdm mostrerà la barra di caricamento
+        for i in tqdm(range(len(test_images)), desc="Inferenza Test Set"):
+            image_path = test_images[i]
+            true_label_idx = test_labels_idx[i]
+            true_label_name = CLASS_NAMES[true_label_idx]
+            
+            # Carica immagine
+            image = Image.open(image_path).convert("RGB")
+            pixel_values = data_transforms(image).unsqueeze(0).to(device)
+            
+            # Passaggio modello
+            with torch.no_grad():
+                outputs = model(pixel_values=pixel_values)
+                logits = outputs.logits
+                probabilities = torch.nn.functional.softmax(logits, dim=-1)[0]
+                
+            predicted_class_id = logits.argmax(-1).item()
+            predicted_label = CLASS_NAMES[predicted_class_id]
+            confidence = probabilities[predicted_class_id].item()
+            
+            # Registra dati
+            y_true.append(true_label_idx)
+            y_pred.append(predicted_class_id)
+            
+            # Scrivi la riga del file CSV
+            writer.writerow([image_path, true_label_name, predicted_label, f"{confidence:.4f}"])
+            
+    print(f"\nPredizioni salvate con successo in {csv_path}")
+            
+    # Calcolo Metriche
+    print("Calcolo metriche in corso...")
+    acc = accuracy_score(y_true, y_pred)
+    precision = precision_score(y_true, y_pred, average='macro', zero_division=0)
+    recall = recall_score(y_true, y_pred, average='macro', zero_division=0)
+    f1 = f1_score(y_true, y_pred, average='macro', zero_division=0)
     
-    print(f"\n=== Risultato Predizione ===")
-    print(f"Classe Predetta: {predicted_label.upper()}")
-    print(f"Confidenza (Probabilità): {confidence:.2%}")
+    # In una classificazione multi-classe calcolata con macro-average, 
+    # la Sensitivity (True Positive Rate) è matematicamente equivalente alla Recall.
+    sensitivity = recall
     
-    if predicted_label == true_label_name:
-        print("✅ CORRETTO!")
-    else:
-        print("❌ SBAGLIATO!")
+    # Salvataggio Metriche in txt
+    txt_path = os.path.join(RESULTS_DIR, "results.txt")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write("=== RISULTATI VALUTAZIONE TEST SET ===\n")
+        f.write(f"Numero totale immagini testate: {len(test_images)}\n\n")
+        f.write(f"Accuracy:    {acc:.4f}\n")
+        f.write(f"Precision:   {precision:.4f} (Macro Average)\n")
+        f.write(f"Recall:      {recall:.4f} (Macro Average)\n")
+        f.write(f"Sensitivity: {sensitivity:.4f} (Identica alla Recall nel Macro Average)\n")
+        f.write(f"F1 Score:    {f1:.4f} (Macro Average)\n")
+        
+    print(f"Metriche salvate con successo in {txt_path}")
     
-    print("\nTop 3 probabilità:")
-    top3_prob, top3_indices = torch.topk(probabilities, 3)
-    for i in range(3):
-        idx = top3_indices[i].item()
-        print(f"- {model.id2label[idx]}: {top3_prob[i].item():.2%}")
+    # Generazione Confusion Matrix
+    print("Generazione Confusion Matrix...")
+    cm = confusion_matrix(y_true, y_pred, labels=range(NUM_CLASSES))
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=CLASS_NAMES)
+    
+    # Aumentiamo la dimensione per accomodare gli 8 nomi lunghi delle classi
+    fig, ax = plt.subplots(figsize=(12, 10))
+    disp.plot(ax=ax, cmap="Blues", xticks_rotation="vertical")
+    plt.tight_layout()
+    
+    cm_path = os.path.join(RESULTS_DIR, "confusion_matrix.png")
+    plt.savefig(cm_path, dpi=300)
+    plt.close()
+    
+    print(f"Confusion Matrix salvata come immagine in {cm_path}")
+    print("\nValutazione completata! Troverai tutto nella cartella 'results'.")
 
 def main():
-    print("=== DINOv3 Inferenza su Test Set (Kvasir-v2) ===")
+    print("=== DINOv3 Valutazione Globale su Test Set (Kvasir-v2) ===")
     device = get_device()
     
     if not os.path.exists(BEST_MODEL_DIR):
         print(f"\nATTENZIONE: La cartella {BEST_MODEL_DIR} non esiste ancora.")
+        print("Devi prima completare l'addestramento lanciando train_model.py!")
         return
         
     if not os.path.exists(DATASET_DIR):
@@ -162,11 +211,7 @@ def main():
         return
         
     model, processor = load_trained_model(device)
-    
-    # Ottieni un'immagine randomicamente SOLO dal set di test
-    test_image_path, true_label = get_random_test_image()
-    
-    predict_image(test_image_path, true_label, model, processor, device)
+    evaluate_test_set(model, processor, device)
 
 if __name__ == "__main__":
     main()

@@ -197,12 +197,16 @@ def main():
         
         # Rinomina l'ultimo checkpoint come "last_model"
         if os.path.exists(last_model_dir):
-            shutil.rmtree(last_model_dir)
-        os.rename(latest_checkpoint, last_model_dir)
+            shutil.rmtree(last_model_dir, ignore_errors=True)
+        
+        try:
+            os.rename(latest_checkpoint, last_model_dir)
+        except PermissionError:
+            print(f"Non è stato possibile rinominare {latest_checkpoint} a causa di un blocco di Windows.")
         
         # Elimina le altre cartelle "checkpoint-xxx" residue (come quella duplicata del best)
         for ckpt in checkpoints[:-1]:
-            shutil.rmtree(ckpt)
+            shutil.rmtree(ckpt, ignore_errors=True)
             
     print("\nPulizia completata: salvati solo 'best_model' e 'last_model'.")
 
