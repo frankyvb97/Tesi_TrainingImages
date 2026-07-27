@@ -166,3 +166,15 @@ Tutti i requisiti sono stati cristallizzati in `requirements.txt` per replicare 
       - Per ogni Fold, l'oggetto `Accelerator` viene istanziato esplicitamente e il suo dizionario interno (`_shared_state["device"]`), così come quello del `PartialState`, vengono popolati a mano con `privateuseone:0`.
       - **Fix Fondamentale:** È stata iniettata la direttiva `training_args.accelerator_config.use_configured_state = True`. Questo parametro vitale impone ad HuggingFace di NON azzerare lo stato di `accelerate` durante il `_setup_devices`, preservando così il nostro setup DirectML per tutti i successivi step del K-Fold.
       - Aggiunta della classe `DirectMLTrainer` che sovrascrive `_prepare_inputs` per assicurare matematicamente lo spostamento di ogni tensore sulla GPU, evitando crash nelle operazioni di convoluzione (`F.conv2d`).
+
+19. **Fix Caricamento Pesi Modello per Inferenza:** 
+    - **Problema:** Lo script `run_model.py` andava in crash lanciando l'errore `UnpicklingError: Weights only load failed` causato da un blocco di sicurezza di PyTorch sul ripristino di un tensore custom (`_rebuild_device_tensor_from_numpy`) quando `weights_only` è impostato a True.
+    - **Soluzione:** Essendo file .bin generati localmente dall'utente al termine dell'addestramento e quindi completamente sicuri, il vincolo è stato disabilitato impostando esplicitamente `torch.load(..., weights_only=False)` permettendo un'inizializzazione liscia dell'inferenza in Ensemble.
+
+20. **Implementazione Data Augmentation Avanzata:** 
+    - **Problema:** Un modello complesso come DINOv3, allenato su un limitato numero di immagini mediche per molte epoche, soffre nativamente di Overfitting (impara a memoria le immagini invece di astrarne i pattern).
+    - **Soluzione:** È stata divisa la pipeline di trasformazione in due. Un flusso `train_transforms` aggressivo applicato solo al training (Flip orizzontali/verticali casuali, Rotazione casuale fino a 30 gradi, e Color Jitter per sfalsare luminosità e contrasto tipici della sonda endoscopica) e un flusso `val_transforms` pulito per una validazione rigorosa senza alterazioni.
+
+21. **Creazione Automatica e Fallback della Configurazione:**
+    - **Problema:** Rischio di crash immediato se il progetto viene clonato su un nuovo ambiente senza la directory `config/` o senza il file `config.json`.
+    - **Soluzione:** Sia `train_model.py` che `run_model.py` sono stati dotati di una funzione di autodetezione. Se `config.json` non viene trovato, il sistema ricrea istantaneamente la cartella e genera un file `.json` compilato con tutti i parametri di default operativi, rendendo il progetto 100% "plug-and-play".
