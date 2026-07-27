@@ -16,8 +16,30 @@ from tqdm import tqdm
 # ==========================================
 # CONFIGURAZIONE
 # ==========================================
-with open("config/config.json", "r", encoding="utf-8") as f:
-    config = json.load(f)
+import os
+
+CONFIG_PATH = "config/config.json"
+DEFAULT_CONFIG = {
+    "MODEL_ID": "facebook/dinov3-convnext-tiny-pretrain-lvd1689m",
+    "DATASET_DIR": "..\\Datasets\\kvasir-dataset-v2",
+    "OUTPUT_DIR": "./dino_kvasir_model",
+    "RESULTS_DIR": "./results",
+    "NUM_FOLDS": 5,
+    "BATCH_SIZE": 16,
+    "EPOCHS": 10,
+    "LEARNING_RATE": 0.0005,
+    "PATIENCE": 10
+}
+
+os.makedirs("config", exist_ok=True)
+if not os.path.exists(CONFIG_PATH):
+    print(f"File di configurazione non trovato. Creazione di {CONFIG_PATH} con i valori di default...")
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(DEFAULT_CONFIG, f, indent=4)
+    config = DEFAULT_CONFIG
+else:
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        config = json.load(f)
 
 MODEL_ID = config["MODEL_ID"]
 ENSEMBLE_DIR = config["OUTPUT_DIR"] 
