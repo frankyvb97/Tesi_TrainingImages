@@ -1,8 +1,0 @@
-=== RISULTATI VALUTAZIONE TEST SET ===
-Numero totale immagini testate: 800
-
-Accuracy:    0.8350
-Precision:   0.8325 (Macro Average)
-Recall:      0.8328 (Macro Average)
-Sensitivity: 0.8328 (Identica alla Recall nel Macro Average)
-F1 Score:    0.8313 (Macro Average)
