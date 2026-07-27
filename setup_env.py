@@ -11,8 +11,19 @@ def run_command(cmd, env=None):
     subprocess.check_call(cmd, env=env)
 
 def has_nvidia_gpu():
+    if platform.system() == "Windows":
+        try:
+            output = subprocess.check_output(
+                ["wmic", "path", "win32_VideoController", "get", "name"], 
+                text=True, 
+                stderr=subprocess.STDOUT
+            )
+            if "NVIDIA" in output.upper():
+                return True
+        except Exception:
+            pass
     try:
-        # Tenta di eseguire nvidia-smi
+        # Tenta di eseguire nvidia-smi come fallback
         subprocess.check_output(["nvidia-smi"], stderr=subprocess.STDOUT)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -65,29 +76,21 @@ def install_dependencies():
     is_amd = has_amd_gpu()
     
     if is_nvidia:
-        print("Rilevata GPU NVIDIA (es. RTX 4090). Installazione di PyTorch con supporto CUDA...")
-        run_command([python_exe, "-m", "pip", "install", "torch", "torchvision", "torchaudio", "--index-url", "https://download.pytorch.org/whl/cu121"])
+        print("Rilevata GPU NVIDIA. Installazione di PyTorch con supporto CUDA...")
+        run_command([python_exe, "-m", "pip", "install", "torch", "torchvision", "torchaudio", "--index-url", "https://download.pytorch.org/whl/cu118"])
     elif is_amd:
-        print("Rilevata GPU AMD. Installazione di PyTorch per CPU + torch-directml...")
+        print("Rilevata GPU AMD/Intel. Installazione di PyTorch per CPU + torch-directml...")
         run_command([python_exe, "-m", "pip", "install", "torch-directml", "torchvision", "torchaudio"])
     else:
         print("Nessuna GPU NVIDIA o AMD rilevata o piattaforma non supportata. Installazione PyTorch standard (CPU)...")
         run_command([python_exe, "-m", "pip", "install", "torch", "torchvision", "torchaudio"])
     
-    # Installazione dipendenze di base e per DINOv3
-    print("Installazione dipendenze extra per DINO...")
-    deps = [
-        "requests",
-        "Pillow",
-        "tqdm",
-        "numpy",
-        "matplotlib",
-        "transformers",
-        "huggingface_hub",
-        "scikit-learn",
-        "accelerate"
-    ]
-    run_command([python_exe, "-m", "pip", "install"] + deps)
+    print("Installazione dipendenze extra dal file requirements.txt...")
+    req_path = os.path.join(os.path.dirname(__file__), "requirements.txt")
+    if os.path.exists(req_path):
+        run_command([python_exe, "-m", "pip", "install", "-r", req_path])
+    else:
+        print(f"[AVVISO] File {req_path} non trovato. Le restanti dipendenze non sono state installate.")
     print("\nInstallazione completata con successo!")
 
 def main():

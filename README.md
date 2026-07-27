@@ -13,6 +13,68 @@ Questo repository contiene il codice e l'ambiente per il progetto di tesi relati
 
 ---
 
+## Istruzioni di Avvio e Setup
+
+Il progetto include degli script intelligenti per configurare automaticamente l'ambiente in base all'hardware rilevato, garantendo la totale assenza di conflitti tra pacchetti (es. CUDA vs DirectML). Puoi scegliere se usare il metodo **Automatico** (consigliato) o quello **Manuale**.
+
+### Metodo 1: Setup Automatico (Consigliato)
+Questo script creerà automaticamente l'ambiente virtuale (`venv_tesi`), rileverà la tua scheda video (NVIDIA o AMD) e installerà i pacchetti corretti in totale autonomia.
+
+1. Apri il terminale nella root del progetto (`Progetto_Tesi`).
+2. Esegui il setup automatico:
+   ```bash
+   python setup_env.py
+   ```
+3. Attiva l'ambiente virtuale appena creato:
+   ```bash
+   .\venv_tesi\Scripts\activate
+   ```
+
+### Gestione Cambio Hardware (`switch_GPU.py`)
+Se l'ambiente è già installato, ma trasferisci il progetto su un altro PC (o cambi scheda video da NVIDIA ad AMD o viceversa), puoi usare l'utility inclusa per adattare l'ambiente senza dover reinstallare tutto da zero:
+1. Attiva l'ambiente (`.\venv_tesi\Scripts\activate`).
+2. Esegui lo script:
+   ```bash
+   python switch_GPU.py
+   ```
+Lo script disinstallerà in modo sicuro i pacchetti in conflitto e re-installerà la libreria PyTorch corretta per il tuo nuovo hardware.
+
+---
+
+### Metodo 2: Setup Manuale
+Se preferisci avere controllo granulare sull'installazione:
+
+1. Crea l'ambiente virtuale ed attivalo:
+   ```bash
+   python -m venv venv_tesi
+   .\venv_tesi\Scripts\activate
+   ```
+2. Installa la libreria PyTorch adatta al tuo sistema (es. CUDA per NVIDIA):
+   ```bash
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+   ```
+   *(Nota: Se hai una scheda AMD, puoi omettere `--index-url` e installare `torch-directml`).*
+3. Installa i restanti pacchetti base:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+---
+
+### Avvio dell'Addestramento (Train)
+Per avviare l'addestramento e generare il modello Kvasir-DINOv3, eseguire:
+```bash
+python train_model.py
+```
+
+### Avvio dell'Inferenza (Run Model)
+Per avviare la valutazione del Test Set e generare le metriche e la matrice di confusione nella cartella `/results`:
+```bash
+python run_model.py
+```
+
+---
+
 ## Log delle Modifiche e Correzioni (Changelog)
 
 Questa sezione documenta tutti i fix architetturali, di dipendenze e di codice affrontati e risolti durante lo sviluppo. *Questo registro verrà aggiornato costantemente ad ogni nuova correzione.*
@@ -83,3 +145,24 @@ Tutti i requisiti sono stati cristallizzati in `requirements.txt` per replicare 
 15. **Centralizzazione delle Configurazioni (`config.json`):**
     - **Richiesta:** Estrarre tutti i parametri e gli iperparametri (Epochs, Batch Size, Learning Rate, Path, ecc.) dai sorgenti per inserirli in un file unico centralizzato.
     - **Soluzione:** Creata una cartella `config/` all'interno della root di progetto. Al suo interno è stato generato il file `config.json` contenente tutte le variabili. Il pre-esistente `dataset_split.json` è stato anch'esso spostato in `config/` per logica di organizzazione. Entrambi gli script `train_model.py` e `run_model.py` sono stati adattati per leggere il JSON di configurazione in fase di avvio (eliminando l'hardcoding), e il file `.gitignore` aggiornato per tracciare correttamente la nuova posizione.
+
+16. **Rimozione Script Batch e Setup Manuale (Ripristino Ambiente Pulito):**
+    - **Richiesta:** Rimuovere gli script batch automatizzati (`start_training.bat`, `start_inference.bat`) a causa di potenziali conflitti di inizializzazione della GPU, e documentare l'avvio manuale.
+    - **Soluzione:** Gli script ausiliari sono stati eliminati per ripristinare il setup stabile originale. L'avvio ora segue il processo manuale standard.
+
+17. **Risoluzione Bug HuggingFace Trainer su GPU AMD (DirectML):**
+    - **Problema:** L'addestramento tramite il `Trainer` di HuggingFace veniva eseguito forzatamente sulla CPU, ignorando la GPU AMD (lasciando la VRAM allo 0%). Interrompendo e riavviando, lo script andava in crash con l'errore `unbox expects Dml at::Tensor`. Inoltre, un nuovo parametro `num_items_in_batch` del Trainer faceva crashare il forward pass del modello.
+    - **Causa:** La libreria `accelerate` (cuore del `Trainer`) non riconosce nativamente il backend `privateuseone:0` (DirectML), eseguendo quindi il fallback su CPU e spostando forzatamente i tensori nella RAM di sistema. Questo fallback è stato risolto forzando l'override del device all'interno dei componenti critici di `accelerate`.
+    - **Soluzione:** È stato implementato un "Monkey Patch" in `train_model.py` per sovrascrivere la proprietà `device` in `TrainingArguments` e `AcceleratorState`, ingannando il framework per costringerlo a usare il device AMD. È stata inoltre creata una sottoclasse personalizzata `DirectMLTrainer` che, sovrascrivendo `_prepare_inputs()`, inietta fisicamente ogni singolo tensore di input nella VRAM, garantendo un utilizzo massiccio e corretto della GPU AMD. Il parametro non supportato `num_items_in_batch` è stato bloccato prima che raggiungesse il backbone.
+
+18. **Risoluzione crash loop `AcceleratorState` con DirectML (Troubleshooting Completo):**
+    - **Problema:** L'utilizzo ripetuto di HuggingFace `Trainer` in un ciclo K-Fold su Windows con GPU AMD (DirectML) causava il crash al secondo Fold: `AttributeError: AcceleratorState object has no attribute distributed_type`. In altri casi portava a fallimenti silenziosi in cui i tensori finivano su CPU scatenando l'errore `tensor.device().type() == at::DeviceType::PrivateUse1 INTERNAL ASSERT FAILED`.
+    - **Diagnostica e Test:** Attraverso una serie di script PyTorch isolati per simulare il comportamento interno di `accelerate` e `transformers.Trainer`, è emerso che:
+      1. Il monkey-patching globale di `TrainingArguments.device` e `Accelerator.device` corrompeva l'inizializzazione del pattern Singleton (Borg) di `accelerate`.
+      2. Anche reimpostando manualmente l'istanza di `Accelerator()` tra un fold e l'altro, il `Trainer` chiamava in automatico una proprietà interna (`args._setup_devices`) prima dell'addestramento.
+      3. Di default, la proprietà `_setup_devices` esegue `AcceleratorState._reset_state(reset_partial_state=True)`, piallando via (cancellando) ogni configurazione manuale del device che avevamo appena preparato per il DirectML, causando un fallimento a cascata nei moduli `PartialState`.
+    - **Soluzione:** 
+      - Rimozione del monkey-patching globale.
+      - Per ogni Fold, l'oggetto `Accelerator` viene istanziato esplicitamente e il suo dizionario interno (`_shared_state["device"]`), così come quello del `PartialState`, vengono popolati a mano con `privateuseone:0`.
+      - **Fix Fondamentale:** È stata iniettata la direttiva `training_args.accelerator_config.use_configured_state = True`. Questo parametro vitale impone ad HuggingFace di NON azzerare lo stato di `accelerate` durante il `_setup_devices`, preservando così il nostro setup DirectML per tutti i successivi step del K-Fold.
+      - Aggiunta della classe `DirectMLTrainer` che sovrascrive `_prepare_inputs` per assicurare matematicamente lo spostamento di ogni tensore sulla GPU, evitando crash nelle operazioni di convoluzione (`F.conv2d`).

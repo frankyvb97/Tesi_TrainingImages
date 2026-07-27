@@ -13,6 +13,10 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 from transformers import TrainingArguments, Trainer
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import StratifiedKFold
+import warnings
+
+# Disabilita il noioso warning di fallback su CPU di DirectML durante le operazioni lerp dell'AdamW
+warnings.filterwarnings("ignore", category=UserWarning, message=".*aten::lerp.Scalar_out.*")
 
 # ==========================================
 # CONFIGURAZIONE
@@ -167,7 +171,7 @@ def main():
             self.classifier = torch.nn.Linear(hidden_size, num_classes)
             
         def forward(self, pixel_values, labels=None, **kwargs):
-            outputs = self.backbone(pixel_values=pixel_values, **kwargs)
+            outputs = self.backbone(pixel_values=pixel_values)
             pooled_output = outputs.pooler_output
             logits = self.classifier(pooled_output)
             
@@ -218,19 +222,22 @@ def main():
                 model = kwargs.get("model")
                 
                 # 1. Salva SEMPRE il modello corrente come 'last_model' ad ogni fine epoca
-                print(f"\n[Callback] Epoca completata! Aggiornamento in {self.last_model_path}...")
+                print(f"\n[Callback] Epoca completata! Salvataggio last_model in corso...")
                 self._save_full_checkpoint(self.last_model_path, model)
                 
                 # 2. Se è anche il migliore finora, salvalo come 'best_model' e resetta la patience
                 if current_accuracy > self.best_metric:
                     self.best_metric = current_accuracy
                     self.patience_counter = 0
-                    print(f"[Callback] Nuovo best model trovato (Accuracy: {current_accuracy:.4f})! Salvataggio in {self.best_model_path}...")
+                    print(f"⭐⭐⭐ [NUOVO BEST MODEL] ⭐⭐⭐")
+                    print(f"L'accuratezza è migliorata a: {current_accuracy:.4f}!")
+                    print(f"Salvataggio in corso in {self.best_model_path}...")
                     self._save_full_checkpoint(self.best_model_path, model)
                 else:
                     # 3. Peggioramento: incrementa la patience
                     self.patience_counter += 1
-                    print(f"[Callback] Nessun miglioramento (Migliore: {self.best_metric:.4f}). Patience: {self.patience_counter}/{self.patience}")
+                    print(f"[Callback] Nessun miglioramento (Il migliore resta: {self.best_metric:.4f}).")
+                    print(f"Patience: {self.patience_counter}/{self.patience}")
                     if self.patience_counter >= self.patience:
                         print(f"\n[Callback] 🛑 Raggiunto il limite di Patience ({self.patience}). Early Stopping attivato!")
                         control.should_training_stop = True
@@ -243,6 +250,11 @@ def main():
     skf = StratifiedKFold(n_splits=NUM_FOLDS, shuffle=True, random_state=42)
     
     for fold, (train_idx, val_idx) in enumerate(skf.split(train_val_samples, train_val_labels), 1):
+        # RESET FORZATO dello stato di Accelerate per consentire multipli avvii di Trainer in loop
+        from accelerate.state import AcceleratorState, PartialState
+        AcceleratorState._reset_state()
+        PartialState._reset_state()
+        
         print(f"\n{'='*50}")
         print(f"=== FOLD {fold}/{NUM_FOLDS} ===")
         print(f"{'='*50}")
@@ -284,9 +296,38 @@ def main():
             dataloader_pin_memory=False,
         )
 
+        # HACK: Il Trainer di HuggingFace forza il fallback su CPU se non trova CUDA o MPS.
+        TrainingArguments.device = property(lambda self: device)
+        
+        # Invece di fare monkey-patching globale su Accelerator (che corrompe l'inizializzazione 
+        # dello stato nei Fold successivi), creiamo esplicitamente l'Accelerator e forziamo
+        # il device nell'istanza.
+        from accelerate import Accelerator
+        from accelerate.state import PartialState
+        accel = Accelerator()
+        accel.state._shared_state["device"] = device
+        PartialState._shared_state["device"] = device
+        
+        # HACK VITALE: Diciamo ad HuggingFace Trainer di NON distruggere e ricreare 
+        # lo stato appena configurato. Altrimenti in _setup_devices cancellerà _shared_state.
+        training_args.accelerator_config.use_configured_state = True
+        # Assegniamo comunque lo stato (anche se ignorato in alcune versioni, è good practice)
+        training_args.distributed_state = accel.state
+
         custom_callback = SaveBestAndLastModelCallback(best_model_dir, last_model_dir, processor, PATIENCE)
         
-        trainer = Trainer(
+        class DirectMLTrainer(Trainer):
+            def _prepare_inputs(self, inputs):
+                # Forza in modo assoluto e manuale lo spostamento di ogni tensore sulla GPU (DML)
+                prepared = {}
+                for k, v in inputs.items():
+                    if isinstance(v, torch.Tensor):
+                        prepared[k] = v.to(device)
+                    else:
+                        prepared[k] = v
+                return prepared
+
+        trainer = DirectMLTrainer(
             model=model,
             args=training_args,
             train_dataset=hf_train_dataset,
