@@ -72,7 +72,19 @@ def main():
     image_mean = processor.image_mean
     image_std = processor.image_std
     
-    data_transforms = transforms.Compose([
+    # 1. Trasformazioni per il Training (con Data Augmentation)
+    train_transforms = transforms.Compose([
+        transforms.Resize((size, size)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomVerticalFlip(p=0.5),
+        transforms.RandomRotation(degrees=30),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=image_mean, std=image_std),
+    ])
+
+    # 2. Trasformazioni per Validazione/Test (PULITE, nessuna alterazione)
+    val_transforms = transforms.Compose([
         transforms.Resize((size, size)),
         transforms.ToTensor(),
         transforms.Normalize(mean=image_mean, std=image_std),
@@ -145,8 +157,8 @@ def main():
                 image = self.transform(image)
             return {"pixel_values": image, "labels": label}
             
-    hf_train_dataset = JSONSubsetDataset(train_samples, transform=data_transforms)
-    hf_val_dataset = JSONSubsetDataset(val_samples, transform=data_transforms)
+    hf_train_dataset = JSONSubsetDataset(train_samples, transform=train_transforms)
+    hf_val_dataset = JSONSubsetDataset(val_samples, transform=val_transforms)
 
     # 3. Caricamento Modello e Configurazione Linear Probing
     print(f"\nCaricamento dell'architettura DINO per classificazione a {num_classes} classi...")
@@ -262,8 +274,8 @@ def main():
         fold_train_samples = [train_val_samples[i] for i in train_idx]
         fold_val_samples = [train_val_samples[i] for i in val_idx]
         
-        hf_train_dataset = JSONSubsetDataset(fold_train_samples, transform=data_transforms)
-        hf_val_dataset = JSONSubsetDataset(fold_val_samples, transform=data_transforms)
+        hf_train_dataset = JSONSubsetDataset(fold_train_samples, transform=train_transforms)
+        hf_val_dataset = JSONSubsetDataset(fold_val_samples, transform=val_transforms)
 
         # 4. Inizializzazione Processor e Modello da ZERO per evitare Data Leakage
         print("Inizializzazione Processor e Modello...")

@@ -88,7 +88,7 @@ def load_ensemble_models(device):
             state_dict = load_file(safetensors_path)
             model.load_state_dict(state_dict)
         elif os.path.exists(bin_path):
-            state_dict = torch.load(bin_path, map_location="cpu", weights_only=True)
+            state_dict = torch.load(bin_path, map_location="cpu", weights_only=False)
             model.load_state_dict(state_dict)
         else:
             print(f"Attenzione: Nessun peso trovato in {m_dir}")
