@@ -3,9 +3,17 @@
     "DATASET_DIR": "..\\Datasets\\kvasir-dataset-v2",
     "OUTPUT_DIR": "./dino_kvasir_model",
     "RESULTS_DIR": "./results",
-    "NUM_FOLDS": 5,
+    "NUM_FOLDS": 2,
     "BATCH_SIZE": 16,
-    "EPOCHS": 10,
-    "LEARNING_RATE": 0.0005,
-    "PATIENCE": 10
+    "EPOCHS": 2,
+    "LEARNING_RATE": 5e-5,
+    "PATIENCE": 10,
+    "AUGMENTATION": {
+        "RANDOM_HORIZONTAL_FLIP": true,
+        "RANDOM_VERTICAL_FLIP": true,
+        "RANDOM_ROTATION": true,
+        "COLOR_JITTER": true,
+        "RANDOM_RESIZED_CROP": true,
+        "ELASTIC_TRANSFORM": true
+    }
 }

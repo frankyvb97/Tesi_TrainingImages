@@ -31,7 +31,15 @@ DEFAULT_CONFIG = {
     "BATCH_SIZE": 16,
     "EPOCHS": 10,
     "LEARNING_RATE": 0.0005,
-    "PATIENCE": 10
+    "PATIENCE": 10,
+    "AUGMENTATION": {
+        "RANDOM_HORIZONTAL_FLIP": True,
+        "RANDOM_VERTICAL_FLIP": True,
+        "RANDOM_ROTATION": True,
+        "COLOR_JITTER": True,
+        "RANDOM_RESIZED_CROP": True,
+        "ELASTIC_TRANSFORM": True
+    }
 }
 
 os.makedirs("config", exist_ok=True)
@@ -54,6 +62,7 @@ BATCH_SIZE = config["BATCH_SIZE"]
 EPOCHS = config["EPOCHS"]
 LEARNING_RATE = config["LEARNING_RATE"]
 PATIENCE = config["PATIENCE"]
+AUGMENTATION = config.get("AUGMENTATION", {})
 
 def get_device():
     if torch.cuda.is_available():
@@ -92,16 +101,43 @@ def main():
     image_mean = processor.image_mean
     image_std = processor.image_std
     
-    # 1. Trasformazioni per il Training (con Data Augmentation)
-    train_transforms = transforms.Compose([
-        transforms.Resize((size, size)),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomVerticalFlip(p=0.5),
-        transforms.RandomRotation(degrees=30),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+    # 1. Trasformazioni per il Training (con Data Augmentation configurabile)
+    train_transform_list = []
+    
+    # RandomResizedCrop (Nuovo): Ritaglia un'area casuale dell'immagine e la ridimensiona. Aiuta il modello a ignorare i bordi neri tipici delle endoscopie e a focalizzarsi sui tessuti.
+    if AUGMENTATION.get("RANDOM_RESIZED_CROP", False):
+        train_transform_list.append(transforms.RandomResizedCrop(size, scale=(0.7, 1.0)))
+    else:
+        # Fallback al resize standard se il crop random è disattivato
+        train_transform_list.append(transforms.Resize((size, size)))
+        
+    # RandomHorizontalFlip: Inverte l'immagine orizzontalmente con probabilità del 50%. Aumenta la variabilità posizionale.
+    if AUGMENTATION.get("RANDOM_HORIZONTAL_FLIP", False):
+        train_transform_list.append(transforms.RandomHorizontalFlip(p=0.5))
+        
+    # RandomVerticalFlip: Inverte l'immagine verticalmente con probabilità del 50%. Aiuta il modello a essere invariante rispetto all'orientamento della sonda.
+    if AUGMENTATION.get("RANDOM_VERTICAL_FLIP", False):
+        train_transform_list.append(transforms.RandomVerticalFlip(p=0.5))
+        
+    # RandomRotation: Ruota l'immagine casualmente fino a 30 gradi. Simula le rotazioni imperfette della telecamera endoscopica.
+    if AUGMENTATION.get("RANDOM_ROTATION", False):
+        train_transform_list.append(transforms.RandomRotation(degrees=30))
+        
+    # ColorJitter: Altera in modo casuale luminosità, contrasto e saturazione. Estremamente utile per simulare diverse condizioni di illuminazione del viscere.
+    if AUGMENTATION.get("COLOR_JITTER", False):
+        train_transform_list.append(transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2))
+        
+    # ElasticTransform (Nuovo): Applica deformazioni locali casuali all'immagine. Ideale per simulare la natura elastica e deformabile dei tessuti biologici (es. polipi).
+    if AUGMENTATION.get("ELASTIC_TRANSFORM", False):
+        train_transform_list.append(transforms.ElasticTransform(alpha=50.0))
+        
+    # Trasformazioni base sempre necessarie (conversione in Tensore e Normalizzazione)
+    train_transform_list.extend([
         transforms.ToTensor(),
         transforms.Normalize(mean=image_mean, std=image_std),
     ])
+    
+    train_transforms = transforms.Compose(train_transform_list)
 
     # 2. Trasformazioni per Validazione/Test (PULITE, nessuna alterazione)
     val_transforms = transforms.Compose([
@@ -193,9 +229,9 @@ def main():
             self.backbone = AutoModel.from_pretrained(model_id, trust_remote_code=True)
             self.config = self.backbone.config
             
-            # Freeze backbone for linear probing
+            # (Modifica) Sblocco del backbone per effettuare il Full Fine-Tuning
             for param in self.backbone.parameters():
-                param.requires_grad = False
+                param.requires_grad = True
                 
             # Create classification head
             # Aggiungiamo un Linear layer finale basato sull'hidden size del modello
@@ -320,6 +356,7 @@ def main():
             eval_strategy="epoch",
             save_strategy="no", 
             learning_rate=LEARNING_RATE,
+            lr_scheduler_type="cosine",
             per_device_train_batch_size=BATCH_SIZE,
             per_device_eval_batch_size=BATCH_SIZE,
             num_train_epochs=EPOCHS,

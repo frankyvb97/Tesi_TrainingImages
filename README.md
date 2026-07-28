@@ -178,3 +178,11 @@ Tutti i requisiti sono stati cristallizzati in `requirements.txt` per replicare 
 21. **Creazione Automatica e Fallback della Configurazione:**
     - **Problema:** Rischio di crash immediato se il progetto viene clonato su un nuovo ambiente senza la directory `config/` o senza il file `config.json`.
     - **Soluzione:** Sia `train_model.py` che `run_model.py` sono stati dotati di una funzione di autodetezione. Se `config.json` non viene trovato, il sistema ricrea istantaneamente la cartella e genera un file `.json` compilato con tutti i parametri di default operativi, rendendo il progetto 100% "plug-and-play".
+
+22. **Passaggio da Linear Probing a Full Fine-Tuning:**
+    - **Richiesta:** Massimizzare le performance del modello sulle immagini endoscopiche per superare la soglia dell'85% di Accuracy ottenuta con il Linear Probing.
+    - **Soluzione:** Nello script `train_model.py` è stato sbloccato l'intero backbone del modello (`requires_grad = True`), passando ufficialmente al Full Fine-Tuning. Contemporaneamente, nel `config.json` le epoche sono state aumentate a 50, il learning rate abbassato drasticamente a `5e-5` (per non distruggere i pesi pre-addestrati) e nei `TrainingArguments` è stato introdotto un learning rate scheduler di tipo `cosine` per una convergenza ottimale verso il termine del training.
+
+23. **Refactoring del Preprocessing e Data Augmentation Dinamica:**
+    - **Richiesta:** Aggiungere le trasformazioni avanzate suggerite per le immagini endoscopiche e permettere l'attivazione/disattivazione dei singoli step di augmentation direttamente dal file di configurazione, commentando esaustivamente ogni trasformazione.
+    - **Soluzione:** È stata aggiunta una sezione `AUGMENTATION` al file `config.json` contenente 6 flag booleani. Nello script `train_model.py` la pipeline di `train_transforms` è stata riscritta in modo procedurale, integrando le nuove trasformazioni `RandomResizedCrop` (per escludere i bordi neri) e `ElasticTransform` (per simulare la deformazione dei tessuti). Ogni singola trasformazione ora viene attivata dinamicamente solo se il relativo flag nel config è impostato a `true`, e include un commento inline che ne spiega il principio logico e i benefici per il dominio endoscopico.
