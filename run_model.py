@@ -4,6 +4,8 @@ import json
 import glob
 import torch
 import random
+import time
+import shutil
 from PIL import Image
 from torchvision import transforms, datasets
 from transformers import AutoImageProcessor, AutoModel
@@ -28,7 +30,22 @@ DEFAULT_CONFIG = {
     "BATCH_SIZE": 16,
     "EPOCHS": 10,
     "LEARNING_RATE": 0.0005,
-    "PATIENCE": 10
+    "PATIENCE": 10,
+    "AUGMENTATION": {
+        "_INFO": "Imposta a true o false per attivare o disattivare le singole tecniche di Data Augmentation",
+        "_desc_RANDOM_HORIZONTAL_FLIP": "Inverte orizzontalmente (50%). Aumenta variabilita posizionale.",
+        "RANDOM_HORIZONTAL_FLIP": True,
+        "_desc_RANDOM_VERTICAL_FLIP": "Inverte verticalmente (50%). Invariante all'orientamento della sonda.",
+        "RANDOM_VERTICAL_FLIP": True,
+        "_desc_RANDOM_ROTATION": "Ruota casualmente (max 30 gradi). Simula rotazioni della telecamera.",
+        "RANDOM_ROTATION": True,
+        "_desc_COLOR_JITTER": "Altera luminosita e contrasto. Simula diverse illuminazioni del viscere.",
+        "COLOR_JITTER": True,
+        "_desc_RANDOM_RESIZED_CROP": "Ritaglia e ridimensiona. Aiuta a ignorare i bordi neri.",
+        "RANDOM_RESIZED_CROP": True,
+        "_desc_ELASTIC_TRANSFORM": "Deformazioni elastiche. Simula la natura deformabile dei tessuti.",
+        "ELASTIC_TRANSFORM": True
+    }
 }
 
 os.makedirs("config", exist_ok=True)
@@ -259,6 +276,21 @@ def evaluate_all(models_dict, processor, device):
 
 def main():
     print("=== DINOv3 Valutazione Multimodello (Kvasir-v2) ===")
+    
+    # Archiviazione vecchi risultati
+    if os.path.exists(RESULTS_DIR):
+        folders_to_move = [f for f in os.listdir(RESULTS_DIR) if f.startswith("fold_") or f == "ensemble"]
+        if folders_to_move:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            archive_dir = os.path.join(RESULTS_DIR, timestamp)
+            os.makedirs(archive_dir, exist_ok=True)
+            print(f"Archiviazione vecchi risultati in {archive_dir}...")
+            for f in folders_to_move:
+                src = os.path.join(RESULTS_DIR, f)
+                dst = os.path.join(archive_dir, f)
+                shutil.move(src, dst)
+                print(f"  - Spostato {f}")
+                
     device = get_device()
     print(f"Device per l'inferenza: {device}")
     

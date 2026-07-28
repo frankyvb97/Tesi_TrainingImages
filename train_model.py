@@ -33,11 +33,18 @@ DEFAULT_CONFIG = {
     "LEARNING_RATE": 0.0005,
     "PATIENCE": 10,
     "AUGMENTATION": {
+        "_INFO": "Imposta a true o false per attivare o disattivare le singole tecniche di Data Augmentation",
+        "_desc_RANDOM_HORIZONTAL_FLIP": "Inverte orizzontalmente (50%). Aumenta variabilita posizionale.",
         "RANDOM_HORIZONTAL_FLIP": True,
+        "_desc_RANDOM_VERTICAL_FLIP": "Inverte verticalmente (50%). Invariante all'orientamento della sonda.",
         "RANDOM_VERTICAL_FLIP": True,
+        "_desc_RANDOM_ROTATION": "Ruota casualmente (max 30 gradi). Simula rotazioni della telecamera.",
         "RANDOM_ROTATION": True,
+        "_desc_COLOR_JITTER": "Altera luminosita e contrasto. Simula diverse illuminazioni del viscere.",
         "COLOR_JITTER": True,
+        "_desc_RANDOM_RESIZED_CROP": "Ritaglia e ridimensiona. Aiuta a ignorare i bordi neri.",
         "RANDOM_RESIZED_CROP": True,
+        "_desc_ELASTIC_TRANSFORM": "Deformazioni elastiche. Simula la natura deformabile dei tessuti.",
         "ELASTIC_TRANSFORM": True
     }
 }
@@ -81,7 +88,35 @@ def compute_metrics(eval_pred):
     return {"accuracy": accuracy_score(labels, predictions)}
 
 def main():
-    print("=== DINOv3 Linear Probing su Kvasir-v2 ===")
+    print("=== DINOv3 Full Fine-Tuning su Kvasir-v2 ===")
+    
+    # Salvataggio cartelle fold precedenti nel backup
+    if os.path.exists(OUTPUT_DIR):
+        backup_dir = os.path.join(OUTPUT_DIR, "backup")
+        
+        # Pulisci il backup esistente se c'è
+        if os.path.exists(backup_dir):
+            for item in os.listdir(backup_dir):
+                item_path = os.path.join(backup_dir, item)
+                try:
+                    if os.path.isdir(item_path):
+                        shutil.rmtree(item_path, ignore_errors=True)
+                    else:
+                        os.remove(item_path)
+                except Exception as e:
+                    print(f"Impossibile rimuovere {item_path}: {e}")
+        else:
+            os.makedirs(backup_dir, exist_ok=True)
+            
+        print(f"Salvataggio cartelle precedenti in {backup_dir}...")
+        for item in os.listdir(OUTPUT_DIR):
+            if item.startswith("fold_"):
+                item_path = os.path.join(OUTPUT_DIR, item)
+                if os.path.isdir(item_path):
+                    backup_path = os.path.join(backup_dir, item)
+                    shutil.move(item_path, backup_path)
+                    print(f"  - Spostata {item_path} in backup")
+                    
     device = get_device()
     print(f"Device per il training: {device}")
     
