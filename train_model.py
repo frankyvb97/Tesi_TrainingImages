@@ -92,54 +92,19 @@ def main():
     # Salvataggio cartelle fold precedenti nel backup
     if os.path.exists(OUTPUT_DIR):
         backup_dir = os.path.join(OUTPUT_DIR, "backup")
-        
-        # Pulisci il backup esistente se c'è
-        if os.path.exists(backup_dir):
-            for item in os.listdir(backup_dir):
-                item_path = os.path.join(backup_dir, item)
-                for attempt in range(5):
-                    try:
-                        if os.path.isdir(item_path):
-                            shutil.rmtree(item_path, ignore_errors=False)
-                        else:
-                            os.remove(item_path)
-                        break
-                    except Exception as e:
-                        if attempt == 4:
-                            print(f"  ! Impossibile rimuovere {item_path} dopo 5 tentativi: {e}")
-                            print("Interruzione dell'esecuzione per evitare inconsistenze dei dati.")
-                            sys.exit(1)
-                        else:
-                            import time
-                            time.sleep(1)
-        else:
-            os.makedirs(backup_dir, exist_ok=True)
+        os.makedirs(backup_dir, exist_ok=True)
             
-        print(f"Salvataggio cartelle precedenti in {backup_dir}...")
+        print(f"Copia cartelle precedenti in {backup_dir}...")
         for item in os.listdir(OUTPUT_DIR):
             if item.startswith("fold_"):
                 item_path = os.path.join(OUTPUT_DIR, item)
                 if os.path.isdir(item_path):
                     backup_path = os.path.join(backup_dir, item)
-                    if os.path.exists(backup_path):
-                        # Se esiste ancora, fa un ultimo tentativo di cancellazione
-                        for attempt in range(5):
-                            try:
-                                shutil.rmtree(backup_path, ignore_errors=False)
-                                break
-                            except Exception as e:
-                                if attempt == 4:
-                                    print(f"  ! Impossibile rimuovere {backup_path} dopo 5 tentativi: {e}")
-                                    print("Interruzione dell'esecuzione per evitare inconsistenze dei dati.")
-                                    sys.exit(1)
-                                else:
-                                    import time
-                                    time.sleep(1)
                     try:
-                        shutil.move(item_path, backup_path)
-                        print(f"  - Spostata {item_path} in backup")
+                        shutil.copytree(item_path, backup_path, dirs_exist_ok=True)
+                        print(f"  - Copiata {item_path} in backup")
                     except Exception as e:
-                        print(f"  ! Impossibile spostare {item_path}: {e}")
+                        print(f"  ! Impossibile copiare {item_path} nel backup: {e}")
                         print("Interruzione dell'esecuzione per evitare inconsistenze dei dati.")
                         sys.exit(1)
                     
