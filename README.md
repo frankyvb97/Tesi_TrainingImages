@@ -61,6 +61,35 @@ Se preferisci avere controllo granulare sull'installazione:
 
 ---
 
+## ⚙️ Configurazione dei Parametri (`config.json`)
+
+Il file `config/config.json` controlla ogni aspetto del ciclo di addestramento e validazione. Ecco il significato di ciascun parametro:
+
+### Parametri di Base
+- **`MODEL_ID`**: L'identificativo del modello pre-addestrato su HuggingFace (es. `facebook/dinov3-convnext-tiny-pretrain-lvd1689m`).
+- **`DATASET_DIR`**: Il percorso alla cartella principale del dataset (es. Kvasir-v2) contenente le sottocartelle per ogni classe.
+- **`OUTPUT_DIR`**: La directory dove verranno salvati i pesi dei modelli, uno per ogni fold (es. `dino_kvasir_model`). All'interno viene generata la sottocartella `backup` ad ogni run.
+- **`RESULTS_DIR`**: La directory per il salvataggio dei risultati, log e matrici di confusione (es. `results`).
+
+### Iperparametri di Addestramento
+- **`NUM_FOLDS`**: Il numero di partizioni (fold) per la K-Fold Cross Validation.
+- **`BATCH_SIZE`**: Quante immagini vengono processate in parallelo ad ogni iterazione. Modificalo in base alla VRAM disponibile sulla tua GPU.
+- **`EPOCHS`**: Il numero massimo di iterazioni sull'intero dataset (per ogni fold).
+- **`LEARNING_RATE`**: Il passo di aggiornamento dei pesi. Per il Full Fine-Tuning è consigliato tenerlo molto basso (es. `5e-5`).
+- **`PATIENCE`**: Il numero di epoche da attendere senza miglioramenti della loss di validazione prima di scatenare l'Early Stopping.
+
+### Modulo Data Augmentation (`AUGMENTATION`)
+Questi flag booleani (impostabili a `true` o `false`) permettono di comporre dinamicamente la pipeline di pre-elaborazione delle immagini di addestramento, riducendo l'overfitting.
+
+- **`RANDOM_HORIZONTAL_FLIP`**: Inverte orizzontalmente l'immagine con probabilità del 50%. Aumenta la variabilità posizionale.
+- **`RANDOM_VERTICAL_FLIP`**: Inverte verticalmente l'immagine. Fondamentale per rendere il modello invariante rispetto a come il medico impugna la sonda endoscopica.
+- **`RANDOM_ROTATION`**: Ruota l'immagine casualmente fino a 30 gradi. Simula le rotazioni e l'inclinazione asimmetrica della telecamera.
+- **`COLOR_JITTER`**: Altera in modo casuale luminosità, contrasto e saturazione. Estremamente utile per simulare diverse condizioni di illuminazione del viscere (riflessi, secrezioni, ombra).
+- **`RANDOM_RESIZED_CROP`**: Ritaglia un'area casuale e la ridimensiona. Costringe il modello a concentrarsi su dettagli più fini e aiuta a ignorare del tutto i fisiologici "bordi neri" quadrati o rotondi attorno all'immagine endoscopica originaria.
+- **`ELASTIC_TRANSFORM`**: Applica distorsioni elastiche casuali locali. Ideale per simulare la natura altamente morbida e deformabile della mucosa e delle formazioni polipoidi.
+
+---
+
 ### Avvio dell'Addestramento (Train)
 Per avviare l'addestramento e generare il modello Kvasir-DINOv3, eseguire:
 ```bash
@@ -75,7 +104,7 @@ python run_model.py
 
 ---
 
-## Log delle Modifiche e Correzioni (Changelog)
+## 📜 Log delle Modifiche e Correzioni (Changelog)
 
 Questa sezione documenta tutti i fix architetturali, di dipendenze e di codice affrontati e risolti durante lo sviluppo. *Questo registro verrà aggiornato costantemente ad ogni nuova correzione.*
 

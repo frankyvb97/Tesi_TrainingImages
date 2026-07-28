@@ -33,18 +33,11 @@ DEFAULT_CONFIG = {
     "LEARNING_RATE": 0.0005,
     "PATIENCE": 10,
     "AUGMENTATION": {
-        "_INFO": "Imposta a true o false per attivare o disattivare le singole tecniche di Data Augmentation",
-        "_desc_RANDOM_HORIZONTAL_FLIP": "Inverte orizzontalmente (50%). Aumenta variabilita posizionale.",
         "RANDOM_HORIZONTAL_FLIP": True,
-        "_desc_RANDOM_VERTICAL_FLIP": "Inverte verticalmente (50%). Invariante all'orientamento della sonda.",
         "RANDOM_VERTICAL_FLIP": True,
-        "_desc_RANDOM_ROTATION": "Ruota casualmente (max 30 gradi). Simula rotazioni della telecamera.",
         "RANDOM_ROTATION": True,
-        "_desc_COLOR_JITTER": "Altera luminosita e contrasto. Simula diverse illuminazioni del viscere.",
         "COLOR_JITTER": True,
-        "_desc_RANDOM_RESIZED_CROP": "Ritaglia e ridimensiona. Aiuta a ignorare i bordi neri.",
         "RANDOM_RESIZED_CROP": True,
-        "_desc_ELASTIC_TRANSFORM": "Deformazioni elastiche. Simula la natura deformabile dei tessuti.",
         "ELASTIC_TRANSFORM": True
     }
 }
@@ -89,6 +82,11 @@ def compute_metrics(eval_pred):
 
 def main():
     print("=== DINOv3 Full Fine-Tuning su Kvasir-v2 ===")
+    print("\n[Configurazione Data Augmentation]")
+    for key, val in AUGMENTATION.items():
+        status = "ATTIVATO" if val else "DISATTIVATO"
+        print(f" - {key}: {status}")
+    print()
     
     # Salvataggio cartelle fold precedenti nel backup
     if os.path.exists(OUTPUT_DIR):
