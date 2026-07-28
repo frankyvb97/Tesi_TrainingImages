@@ -1,4 +1,5 @@
 import os
+import sys
 import torch
 import numpy as np
 import evaluate
@@ -96,13 +97,21 @@ def main():
         if os.path.exists(backup_dir):
             for item in os.listdir(backup_dir):
                 item_path = os.path.join(backup_dir, item)
-                try:
-                    if os.path.isdir(item_path):
-                        shutil.rmtree(item_path, ignore_errors=True)
-                    else:
-                        os.remove(item_path)
-                except Exception as e:
-                    print(f"Impossibile rimuovere {item_path}: {e}")
+                for attempt in range(5):
+                    try:
+                        if os.path.isdir(item_path):
+                            shutil.rmtree(item_path, ignore_errors=False)
+                        else:
+                            os.remove(item_path)
+                        break
+                    except Exception as e:
+                        if attempt == 4:
+                            print(f"  ! Impossibile rimuovere {item_path} dopo 5 tentativi: {e}")
+                            print("Interruzione dell'esecuzione per evitare inconsistenze dei dati.")
+                            sys.exit(1)
+                        else:
+                            import time
+                            time.sleep(1)
         else:
             os.makedirs(backup_dir, exist_ok=True)
             
@@ -112,8 +121,27 @@ def main():
                 item_path = os.path.join(OUTPUT_DIR, item)
                 if os.path.isdir(item_path):
                     backup_path = os.path.join(backup_dir, item)
-                    shutil.move(item_path, backup_path)
-                    print(f"  - Spostata {item_path} in backup")
+                    if os.path.exists(backup_path):
+                        # Se esiste ancora, fa un ultimo tentativo di cancellazione
+                        for attempt in range(5):
+                            try:
+                                shutil.rmtree(backup_path, ignore_errors=False)
+                                break
+                            except Exception as e:
+                                if attempt == 4:
+                                    print(f"  ! Impossibile rimuovere {backup_path} dopo 5 tentativi: {e}")
+                                    print("Interruzione dell'esecuzione per evitare inconsistenze dei dati.")
+                                    sys.exit(1)
+                                else:
+                                    import time
+                                    time.sleep(1)
+                    try:
+                        shutil.move(item_path, backup_path)
+                        print(f"  - Spostata {item_path} in backup")
+                    except Exception as e:
+                        print(f"  ! Impossibile spostare {item_path}: {e}")
+                        print("Interruzione dell'esecuzione per evitare inconsistenze dei dati.")
+                        sys.exit(1)
                     
     device = get_device()
     print(f"Device per il training: {device}")

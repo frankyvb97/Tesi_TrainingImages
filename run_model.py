@@ -196,7 +196,7 @@ def save_evaluation_results(y_true, y_pred, confidences, output_dir, test_images
     plt.savefig(os.path.join(output_dir, "confusion_matrix.png"))
     plt.close()
 
-def evaluate_all(models_dict, processor, device):
+def evaluate_all(models_dict, processor, device, run_dir):
     test_images, test_labels_idx = get_test_dataset_info()
     print(f"Inizio valutazione globale (Singoli Fold + Ensemble) sull'intero Test Set ({len(test_images)} immagini)...")
     
@@ -258,31 +258,22 @@ def evaluate_all(models_dict, processor, device):
     # Fase di Salvataggio
     for name in fold_names:
         print(f"\nSalvataggio risultati per '{name}' in corso...")
-        output_dir = os.path.join(RESULTS_DIR, name)
+        output_dir = os.path.join(run_dir, name)
         save_evaluation_results(y_true, y_pred_dict[name], conf_dict[name], output_dir, test_images)
         
     print(f"\nSalvataggio risultati per 'ensemble' in corso...")
-    output_dir = os.path.join(RESULTS_DIR, "ensemble")
+    output_dir = os.path.join(run_dir, "ensemble")
     save_evaluation_results(y_true, y_pred_ensemble, conf_ensemble, output_dir, test_images)
     
-    print("\nValutazione globale completata! Troverai tutto diviso in sottocartelle dentro 'results'.")
+    print(f"\nValutazione globale completata! Troverai tutto in: {run_dir}")
 
 def main():
     print("=== DINOv3 Valutazione Multimodello (Kvasir-v2) ===")
     
-    # Archiviazione vecchi risultati
-    if os.path.exists(RESULTS_DIR):
-        folders_to_move = [f for f in os.listdir(RESULTS_DIR) if f.startswith("fold_") or f == "ensemble"]
-        if folders_to_move:
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            archive_dir = os.path.join(RESULTS_DIR, timestamp)
-            os.makedirs(archive_dir, exist_ok=True)
-            print(f"Archiviazione vecchi risultati in {archive_dir}...")
-            for f in folders_to_move:
-                src = os.path.join(RESULTS_DIR, f)
-                dst = os.path.join(archive_dir, f)
-                shutil.move(src, dst)
-                print(f"  - Spostato {f}")
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    run_dir = os.path.join(RESULTS_DIR, timestamp)
+    os.makedirs(run_dir, exist_ok=True)
+    print(f"I risultati verranno salvati in: {run_dir}")
                 
     device = get_device()
     print(f"Device per l'inferenza: {device}")
@@ -292,7 +283,7 @@ def main():
         return
         
     models_dict, processor = load_ensemble_models(device)
-    evaluate_all(models_dict, processor, device)
+    evaluate_all(models_dict, processor, device, run_dir)
 
 if __name__ == "__main__":
     main()
