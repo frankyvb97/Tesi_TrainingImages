@@ -14,5 +14,5 @@ __pycache__/
 .idea/
 
 # Dati
-config/dataset_split.json
+config/
 results/
